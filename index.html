@@ -1,0 +1,1622 @@
+<!DOCTYPE html>
+<!--
+  PERFORMANCE MODE
+  ────────────────
+  class="perf-high"  → frosted-glass cards (backdrop-filter blur). Prettier,
+                       but the GPU re-blurs the area behind every card on
+                       every frame while the video repaints underneath.
+  class="perf-lite"  → solid-ish cards, no blur. Noticeably smoother on
+                       laptops and integrated graphics.
+  Swap the one word below to switch.
+-->
+<html lang="en" class="perf-lite">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Middleham Castle: A Scroll Through Time | Tower &amp; Keep</title>
+<meta name="description" content="Scroll through four centuries of Middleham Castle, from the timber motte-and-bailey on William's Hill to the ruined Windsor of the North. A 3D reconstruction by Tower &amp; Keep.">
+<meta name="author" content="Tower &amp; Keep">
+
+<!-- ── LINK PREVIEWS ───────────────────────────────────────────────
+     These control what appears when the page is shared in Slack,
+     iMessage, LinkedIn, Facebook and so on.
+
+     IMPORTANT: og:url and og:image must be ABSOLUTE urls - scrapers
+     do not resolve relative paths. Once you know your published
+     address, replace REPLACE-WITH-YOUR-URL below with it, e.g.
+        https://bryanmanis.github.io/middleham
+     Until you do, the link will share with text but no image.
+──────────────────────────────────────────────────────────────── -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Tower &amp; Keep">
+<meta property="og:title" content="Middleham Castle: A Scroll Through Time">
+<meta property="og:description" content="Four centuries of Middleham Castle, scrolled. A 3D reconstruction by Tower &amp; Keep.">
+<meta property="og:url" content="REPLACE-WITH-YOUR-URL/">
+<meta property="og:image" content="REPLACE-WITH-YOUR-URL/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Middleham Castle: A Scroll Through Time">
+<meta name="twitter:description" content="Four centuries of Middleham Castle, scrolled. A 3D reconstruction by Tower &amp; Keep.">
+<meta name="twitter:image" content="REPLACE-WITH-YOUR-URL/og-image.jpg">
+<link rel="icon" href="tk-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --card-bg: rgba(255, 255, 255, 0.85);
+    --card-radius: 10px;
+    --card-padding: 2rem 2.25rem;
+    --text-white: #ffffff;
+    --text-dark: #1a1a1a;
+    --text-muted: rgba(0,0,0,0.55);
+    --accent: #cc0000;
+  }
+
+  html { scroll-behavior: auto; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: #000;
+    color: var(--text-white);
+    overflow-x: hidden;
+  }
+
+  /* ── STICKY VIDEO STAGE ── */
+  #stage {
+    position: sticky;
+    top: 0;
+    width: 100%;
+    height: 100vh;
+    overflow: hidden;
+    z-index: 0;
+  }
+
+  #bg-video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    pointer-events: none;
+    /* NOTE: do NOT add transform: translateZ(0) / will-change here.
+       Promoting the video to its own compositor layer can make Chrome
+       rasterize that layer at 1x and scale it up on fractional-DPI
+       displays (e.g. a 2560-wide screen at 150% scaling), which looks
+       like blur. The measured performance gain was negligible; the
+       real win came from the scroll engine rewrite. */
+  }
+
+  /* Subtle vignette so cards always read well */
+  #stage::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse at center, transparent 30%, rgba(0,0,0,0.45) 100%),
+      linear-gradient(to bottom, rgba(0,0,0,0.18) 0%, transparent 20%, transparent 80%, rgba(0,0,0,0.35) 100%);
+    pointer-events: none;
+  }
+
+  /* ── SCROLL DRIVER ── */
+  /* This element's height determines total scroll distance.
+     Increase multiplier to slow down the video scrub. */
+  #scroll-driver {
+    position: relative;
+    /* ── THE SINGLE MOST IMPORTANT NUMBER ON THIS PAGE ──────────────
+       This is NOT about decoding speed (measured at 1ms on this
+       hardware — effectively free). It is about how many pixels of
+       scroll each video frame has to cover.
+
+         pixels per frame = (height x viewport_px / 100) x 0.85 / frame_count
+
+       The clip is 43.0s at 30fps = 1291 frames. On a ~900px viewport:
+
+       (figures below assume VIDEO_ENDS_AT = 0.94)
+
+         3500vh -> 22.9 px/frame   very steppy   (what felt clunky)
+         2800vh -> 18.3 px/frame   steppy
+         2200vh -> 14.4 px/frame   acceptable    <-- current
+         1750vh -> 11.5 px/frame   smooth
+         1400vh ->  9.2 px/frame   smooth, but races through
+
+       Below ~12 px/frame it reads as continuous motion. Longer pages
+       are steppier, not smoother — the frames simply run out.
+       Re-rendering the clip at 60fps would double the frame count and
+       halve every number above, letting the page be long AND smooth.
+       Raising VIDEO_ENDS_AT spreads the same frames over more scroll, so
+       this height was trimmed from 2400vh to hold px/frame steady.
+       ──────────────────────────────────────────────────────────────── */
+    height: 2200vh;
+    margin-top: -100vh; /* Pull up so stage starts at top */
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  /* ── CARDS LAYER ── */
+  #cards-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+
+  .card-anchor {
+    /* Each anchor sits at a percentage of total scroll height */
+    position: absolute;
+    left: 0;
+    width: 100%;
+    display: flex;
+    justify-content: flex-start;
+    padding: 0 8vw;
+    pointer-events: none;
+  }
+
+  /* Odd cards left, even cards right — the default alternation */
+  .card-anchor:nth-child(even) {
+    justify-content: flex-end;
+  }
+
+  /* ── PER-CARD OVERRIDE ──────────────────────────────────────────
+     Add data-side="left" or data-side="right" to any .card-anchor to
+     break the alternation for that one card. Everything else keeps
+     alternating as normal.
+
+         <div class="card-anchor" ... data-side="left">
+
+     These rules sit AFTER the nth-child rule above and carry equal
+     specificity, so source order is what makes them win. Don't move
+     them above it. Mobile ignores both (all cards centre there). */
+  .card-anchor[data-side="left"]  { justify-content: flex-start; }
+  .card-anchor[data-side="right"] { justify-content: flex-end; }
+
+  .card {
+    background: var(--card-bg);
+    border-radius: var(--card-radius);
+    padding: var(--card-padding);
+    max-width: 420px;
+    width: 100%;
+    color: var(--text-dark);
+    pointer-events: auto;
+    /* Cards translate up as user scrolls — handled by JS */
+    will-change: transform, opacity;
+    transform: translateY(0px);
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    border: 1px solid rgba(0,0,0,0.08);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.18);
+  }
+
+  /* Frosted glass — only in perf-high mode (see note at top of file) */
+  .perf-high .card {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  /* No blur — cards go more opaque so text still reads over the video */
+  .perf-lite .card {
+    background: rgba(255, 255, 255, 0.94);
+  }
+
+  .card.visible {
+    opacity: 1;
+  }
+
+  .card-eyebrow {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.6rem;
+  }
+
+  .card-title {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: clamp(1.35rem, 2.4vw, 1.75rem);
+    font-weight: 700;
+    line-height: 1.2;
+    margin-bottom: 0.85rem;
+    color: var(--text-dark);
+  }
+
+  .card-body {
+    font-size: 0.93rem;
+    line-height: 1.7;
+    color: var(--text-muted);
+    font-weight: 300;
+  }
+
+  .card-divider {
+    width: 32px;
+    height: 2px;
+    background: var(--accent);
+    margin-bottom: 1rem;
+    border-radius: 1px;
+  }
+
+  /* ── CARD MEDIA (optional image or video inside a card) ── */
+  .card-media {
+    width: 100%;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 1rem;
+    /* negative margin to bleed to card edges if desired — remove if you prefer inset */
+    margin-left: -0px;
+  }
+
+  .card-media img,
+  .card-media video {
+    width: 100%;
+    display: block;
+    object-fit: cover;
+    max-height: 200px;
+    border-radius: 6px;
+  }
+
+  /* Place media ABOVE text by default.
+     Add class .card-media--below to push it beneath the body text. */
+  .card-media--below {
+    margin-top: 1rem;
+    margin-bottom: 0;
+  }
+
+  /* ── INTRO OVERLAY (visible before scroll) ── */
+  #intro {
+    position: fixed;
+    bottom: 3rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    animation: fadeInUp 1.2s 0.8s both;
+    pointer-events: none;
+    transition: opacity 0.4s ease;
+  }
+
+  #intro span {
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.6);
+  }
+
+  .scroll-arrow {
+    width: 28px;
+    height: 28px;
+    border-right: 2px solid rgba(255,255,255,0.5);
+    border-bottom: 2px solid rgba(255,255,255,0.5);
+    transform: rotate(45deg);
+    animation: bounce 1.6s infinite;
+  }
+
+  #intro.hidden {
+    opacity: 0 !important;
+    pointer-events: none;
+    visibility: hidden;
+  }
+
+  /* Progress bar */
+  #progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 3px;
+    width: 100%;
+    background: linear-gradient(90deg, var(--accent), rgba(204,0,0,0.4));
+    z-index: 100;
+    /* Driven by scaleX (compositor-only) instead of width (forces layout
+       on every scroll frame). */
+    transform: scaleX(0);
+    transform-origin: 0 50%;
+    will-change: transform;
+  }
+
+  #end-pad {
+    height: 100vh;
+    background: #000;
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2rem;
+  }
+
+  #end-pad .end-title {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: clamp(1.5rem, 3vw, 2.25rem);
+    color: rgba(255,255,255,0.4);
+    letter-spacing: 0.05em;
+  }
+
+  #end-pad .end-label {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: clamp(1.1rem, 2vw, 1.5rem);
+    color: rgba(255,255,255,0.85);
+    letter-spacing: 0.04em;
+    font-weight: 400;
+  }
+
+  .explore-card {
+    position: relative;
+    width: clamp(520px, 72vw, 960px);
+    border-radius: 10px;
+    overflow: hidden;
+    cursor: pointer;
+    text-decoration: none;
+    display: block;
+    border: 1px solid rgba(255,255,255,0.12);
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+  }
+
+  .explore-card video {
+    width: 100%;
+    display: block;
+    pointer-events: none;
+  }
+
+  .explore-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(204, 0, 0, 0);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.3s ease;
+  }
+
+  .explore-card:hover .explore-overlay {
+    background: rgba(204, 0, 0, 0.55);
+  }
+
+  .explore-word {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: clamp(1.6rem, 3vw, 2.2rem);
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    opacity: 0;
+    transform: scale(0.9);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    pointer-events: none;
+  }
+
+  .explore-card:hover .explore-word {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  /* ── HEADER ── */
+  #tk-header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 5vw;
+    height: 68px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid rgba(0,0,0,0.08);
+    box-sizing: border-box;
+  }
+
+  #tk-header .tk-logo {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    text-decoration: none;
+    color: #000;
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 1.25rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+
+  #tk-header .tk-logo img {
+    height: 38px;
+    width: 38px;
+    border-radius: 8px;
+    display: block;
+    flex-shrink: 0;
+  }
+
+  #tk-header .tk-logo span {
+    color: #cc0000;
+    margin: 0 -0.22em;
+  }
+
+  #tk-header .tk-nav-desktop {
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+  }
+
+  #tk-header .tk-nav-desktop a {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.82rem;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(0,0,0,0.7);
+    text-decoration: none;
+    transition: color 0.2s;
+  }
+
+  #tk-header .tk-nav-desktop a:hover {
+    color: #000;
+  }
+
+  #tk-header .tk-donate {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.78rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #fff !important;
+    background: #cc0000;
+    padding: 0.45rem 1.1rem;
+    border-radius: 4px;
+    text-decoration: none;
+    transition: background 0.2s;
+    white-space: nowrap;
+  }
+
+  #tk-header .tk-donate:hover {
+    background: #aa0000;
+  }
+
+  /* ── FOOTER ── */
+  #tk-footer {
+    background: #000;
+    color: rgba(255,255,255,0.65);
+    padding: 3.5rem 5vw 2rem;
+    position: relative;
+    z-index: 2;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+
+  #tk-footer .footer-inner {
+    max-width: 1100px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 2.5rem;
+    padding-bottom: 2.5rem;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+  }
+
+  #tk-footer .footer-brand img {
+    height: 40px;
+    margin-bottom: 1rem;
+    display: block;
+  }
+
+  #tk-footer .footer-brand p {
+    font-size: 0.83rem;
+    line-height: 1.65;
+    color: rgba(255,255,255,0.45);
+    max-width: 220px;
+  }
+
+  #tk-footer .footer-nav h4,
+  #tk-footer .footer-social h4 {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.35);
+    margin-bottom: 1rem;
+  }
+
+  #tk-footer .footer-nav a {
+    display: block;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.88rem;
+    color: rgba(255,255,255,0.65);
+    text-decoration: none;
+    margin-bottom: 0.55rem;
+    transition: color 0.2s;
+  }
+
+  #tk-footer .footer-nav a:hover {
+    color: #fff;
+  }
+
+  #tk-footer .footer-social .social-icons {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+  }
+
+  #tk-footer .footer-social .social-icons a img {
+    height: 22px;
+    width: 22px;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+    display: block;
+  }
+
+  #tk-footer .footer-social .social-icons a:hover img {
+    opacity: 1;
+  }
+
+  #tk-footer .footer-bottom {
+    max-width: 1100px;
+    margin: 1.5rem auto 0;
+    font-size: 0.78rem;
+    color: rgba(255,255,255,0.25);
+    letter-spacing: 0.04em;
+  }
+
+  /* Push body content below fixed header */
+  #stage {
+    margin-top: 0; /* stage is sticky so header overlaps naturally */
+  }
+
+  @keyframes fadeInUp {
+    from { opacity: 0; transform: translateX(-50%) translateY(16px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+
+  @keyframes bounce {
+    0%, 100% { transform: rotate(45deg) translateY(0); }
+    50%       { transform: rotate(45deg) translateY(6px); }
+  }
+
+  /* ── EXPANDABLE CARD IMAGES ── */
+  .card-media img {
+    cursor: zoom-in;
+    transition: transform 0.25s ease;
+  }
+  .card-media img:hover {
+    transform: scale(1.02);
+  }
+
+  /* ── LIGHTBOX OVERLAY ── */
+  #lightbox {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.92);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    cursor: zoom-out;
+    padding: 4vh 4vw;
+  }
+
+  #lightbox.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  #lightbox img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 6px;
+    box-shadow: 0 10px 50px rgba(0, 0, 0, 0.6);
+    transform: scale(0.96);
+    transition: transform 0.3s ease;
+  }
+
+  #lightbox.open img {
+    transform: scale(1);
+  }
+
+  #lightbox-close {
+    position: absolute;
+    top: 1.5rem;
+    right: 1.5rem;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    color: #fff;
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s ease;
+    font-family: 'DM Sans', sans-serif;
+  }
+
+  #lightbox-close:hover {
+    background: rgba(255, 255, 255, 0.25);
+  }
+
+  /* ── HAMBURGER BUTTON (hidden by default, shown on mobile) ── */
+  #tk-hamburger {
+    display: none;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 8px;
+    width: 40px;
+    height: 40px;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 5px;
+  }
+
+  #tk-hamburger span {
+    display: block;
+    width: 22px;
+    height: 2px;
+    background: #1a1a1a;
+    border-radius: 2px;
+    transition: transform 0.3s ease, opacity 0.2s ease;
+  }
+
+  #tk-hamburger.open span:nth-child(1) {
+    transform: translateY(7px) rotate(45deg);
+  }
+  #tk-hamburger.open span:nth-child(2) {
+    opacity: 0;
+  }
+  #tk-hamburger.open span:nth-child(3) {
+    transform: translateY(-7px) rotate(-45deg);
+  }
+
+  /* ── MOBILE NAV PANEL (slides down from header) ── */
+  #tk-mobile-nav {
+    position: fixed;
+    top: 68px;
+    left: 0;
+    width: 100%;
+    background: rgba(255, 255, 255, 0.98);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    z-index: 199;
+    display: flex;
+    flex-direction: column;
+    padding: 1rem 5vw 1.5rem;
+    transform: translateY(-110%);
+    transition: transform 0.3s ease;
+    visibility: hidden;
+  }
+
+  #tk-mobile-nav.open {
+    transform: translateY(0);
+    visibility: visible;
+  }
+
+  #tk-mobile-nav a {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 1rem;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    color: rgba(0, 0, 0, 0.75);
+    text-decoration: none;
+    padding: 0.85rem 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  }
+
+  #tk-mobile-nav a:last-child {
+    border-bottom: none;
+  }
+
+  #tk-mobile-nav .tk-donate-mobile {
+    margin-top: 0.8rem;
+    background: #cc0000;
+    color: #fff;
+    text-align: center;
+    border-radius: 4px;
+    padding: 0.85rem 1rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-size: 0.85rem;
+  }
+
+  /* ────────────────────────────────────────────────
+     TABLET (≤ 1024px)
+  ──────────────────────────────────────────────── */
+  @media (max-width: 1024px) {
+    /* Show hamburger, hide desktop nav at tablet width and below */
+    #tk-header .tk-nav-desktop {
+      display: none;
+    }
+    #tk-hamburger {
+      display: flex;
+    }
+
+    .card-anchor {
+      padding: 0 6vw;
+    }
+
+    .card {
+      max-width: 460px;
+      padding: 1.75rem 2rem;
+    }
+
+    #tk-footer .footer-inner {
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+    }
+
+    #tk-footer .footer-brand {
+      grid-column: 1 / -1;
+    }
+  }
+
+  /* ────────────────────────────────────────────────
+     MOBILE (≤ 640px)
+  ──────────────────────────────────────────────── */
+  @media (max-width: 640px) {
+    /* Cards: anchor to bottom 60% of viewport, centered horizontally.
+       Leaves the top ~40% always showing the background video. */
+    .card-anchor,
+    .card-anchor:nth-child(even),
+    .card-anchor[data-side="left"],
+    .card-anchor[data-side="right"] {
+      padding: 0 4vw 4vh;
+      justify-content: center;
+      align-items: flex-end;
+      height: 100vh;
+    }
+
+    .card {
+      max-width: 100%;
+      padding: 1.4rem 1.5rem;
+    }
+
+    .perf-high .card {
+      background: rgba(255, 255, 255, 0.78);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+    }
+
+    .perf-lite .card {
+      background: rgba(255, 255, 255, 0.92);
+    }
+
+    /* Shrink the in-card image so the whole card fits in the lower 60% */
+    .card-media img,
+    .card-media video {
+      max-height: 140px;
+    }
+
+    .card-title {
+      font-size: clamp(1.15rem, 5.5vw, 1.5rem);
+      line-height: 1.25;
+    }
+
+    .card-body {
+      font-size: 0.88rem;
+      line-height: 1.6;
+    }
+
+    .card-eyebrow {
+      font-size: 10px;
+    }
+
+    /* Explore end card: drop the 520px floor so it fits phones */
+    .explore-card {
+      width: 92vw;
+    }
+
+    #end-pad {
+      padding: 0 4vw;
+      gap: 1.5rem;
+    }
+
+    /* Footer: single column */
+    #tk-footer {
+      padding: 2.5rem 5vw 1.5rem;
+    }
+
+    #tk-footer .footer-inner {
+      grid-template-columns: 1fr;
+      gap: 2rem;
+      text-align: left;
+    }
+
+    #tk-footer .footer-brand {
+      grid-column: auto;
+    }
+
+    #tk-footer .footer-brand p {
+      max-width: 100%;
+    }
+
+    /* Lightbox close button: pull in slightly so it doesn't hug the edge */
+    #lightbox {
+      padding: 6vh 3vw;
+    }
+
+    #lightbox-close {
+      top: 1rem;
+      right: 1rem;
+      width: 40px;
+      height: 40px;
+    }
+
+    /* Intro hint: position higher so it doesn't get cut off on short phones */
+    #intro {
+      bottom: 2rem;
+    }
+  }
+
+</style>
+</head>
+<body>
+
+<div id="progress"></div>
+
+<!-- ── HEADER ── -->
+<header id="tk-header">
+  <a class="tk-logo" href="https://www.towerandkeep.org/">
+    <img src="tk-logo.png" alt="Tower & Keep logo">
+    Tower <span>&</span> Keep
+  </a>
+  <nav class="tk-nav-desktop">
+    <a href="https://www.towerandkeep.org/castles/castles">Castles</a>
+    <a href="https://www.towerandkeep.org/stories/stories">Stories</a>
+    <a href="https://www.towerandkeep.org/blog-posts/blog-posts">Blog</a>
+    <a href="https://www.towerandkeep.org/about-us">About us</a>
+    <a href="https://www.towerandkeep.org/contact-us">Contact us</a>
+    <a class="tk-donate" href="https://www.towerandkeep.org/donate">Donate</a>
+  </nav>
+  <button id="tk-hamburger" aria-label="Open menu" aria-expanded="false" aria-controls="tk-mobile-nav">
+    <span></span>
+    <span></span>
+    <span></span>
+  </button>
+</header>
+
+<!-- ── MOBILE NAV PANEL ── -->
+<nav id="tk-mobile-nav" aria-hidden="true">
+  <a href="https://www.towerandkeep.org/castles/castles">Castles</a>
+  <a href="https://www.towerandkeep.org/stories/stories">Stories</a>
+  <a href="https://www.towerandkeep.org/blog-posts/blog-posts">Blog</a>
+  <a href="https://www.towerandkeep.org/about-us">About us</a>
+  <a href="https://www.towerandkeep.org/contact-us">Contact us</a>
+  <a class="tk-donate-mobile" href="https://www.towerandkeep.org/donate">Donate</a>
+</nav>
+
+<!-- STICKY VIDEO -->
+<div id="stage">
+  <!--
+    ╔══════════════════════════════════════════════════════════════════╗
+    ║  BACKGROUND VIDEO — two quality tiers                            ║
+    ║                                                                  ║
+    ║  data-src-sd : the standard file. Everyone gets this unless      ║
+    ║                their screen is wider than 1920 real pixels.      ║
+    ║  data-src-hd : optional high-res file for large displays.        ║
+    ║                Leave it EMPTY until the file exists, or the      ║
+    ║                page will 404 on big screens.                     ║
+    ║                                                                  ║
+    ║  Just edit the filenames below — nothing else needs changing.    ║
+    ╚══════════════════════════════════════════════════════════════════╝
+  -->
+  <video id="bg-video" muted playsinline preload="auto" poster="poster.jpg"
+         data-src-sd="middleham-timeline.mp4"
+         data-src-hd=""></video>
+</div>
+<!-- SCROLL DRIVER + CARDS -->
+<div id="scroll-driver">
+  <div id="cards-layer">
+
+    <!--
+      16 cards, distributed across the five eras of the footage.
+      Sides alternate automatically: odd cards left, even cards right
+      (see .card-anchor:nth-child(even) in the CSS). Card 1 is on the left.
+
+      SIDES: odd cards go left, even cards go right, automatically.
+      To break that for one card, add data-side="left" or "right" to its
+      .card-anchor. See the PER-CARD OVERRIDE note in the CSS.
+
+      NOTE: the count is by LIVE cards. Commenting a card out shifts the
+      odd/even of every card below it, flipping their sides. Re-enabling
+      one shifts them back. data-side is how you pin a card regardless.
+
+      CAUTION: with your current positions these pairs overlap (both on
+      screen briefly), so they must NOT share a side or they collide:
+          1&2   4&5   9&10   10&11
+      Numbering counts live cards only, top to bottom.
+
+      data-position is a fraction of the WHOLE scroll driver.
+      To convert a video timestamp:  pos = seconds / 43.033 * 0.94
+
+      Cuts in the footage: 0.0 / 10.0 / 21.93 / 30.93 / 38.40 / 43.03s
+      Cards per era:        4  /   4   /   3   /   3   /  2
+      Each card is inset from its era's cut points so it never lands on
+      the transition itself.
+    -->
+
+    <!-- card 01 · era 1 (timber motte & bailey on William's Hill) · t≈1.9s · left -->
+    <div class="card-anchor" data-position="0.015">
+
+      <div class="card">
+        <p class="card-eyebrow">Chapter 01</p>
+        <div class="card-divider"></div>
+        <!-- OPTIONAL: add an image or video above the title.
+             For an image: <div class="card-media"><img src="your-image.jpg" alt="description"></div>
+             For a video: <div class="card-media"><video autoplay muted loop playsinline><source src="your-clip.mp4" type="video/mp4"></video></div>
+             To place media BELOW the text instead, add class "card-media--below" -->
+        <h2 class="card-title">Middleham Castle
+Middleham, North Yorkshire, UK
+1170s - 1531</h2>
+        <p class="card-body">
+          Middleham’s origins still remain somewhat of a mystery, as there is little written evidence of a structure standing prior to the Norman Conquest and the recording of the Domesday Book in 1086. While there was an early timber castle located just to the south of the stone castle, likely built following the Norman Conquest at the end of the 10th century, the stone structure itself is dated to sometime in the late 12th century.
+        </p>
+      </div>
+    </div>
+
+    <!-- card 02 · era 1 (timber motte & bailey on William's Hill) · t≈4.1s · right -->
+    <div class="card-anchor" data-position="0.07">
+      <div class="card">
+        <p class="card-eyebrow">Chapter 02</p>
+        <div class="card-divider"></div>
+        <h2 class="card-title">Placeholder — write the heading here</h2>
+        <p class="card-body">
+          Replace this text. This card appears at about 4.1s into the
+          video, over the timber motte & bailey on William's Hill.
+        </p>
+        <!-- Optional image:
+        <div class="card-media card-media--below">
+          <img src="your-image.png" alt="description">
+        </div> -->
+      </div>
+    </div>
+
+    <!-- card 03 · era 1 (timber motte & bailey on William's Hill) · t≈6.2s · left -->
+    <div class="card-anchor" data-position="0.1362">
+      <div class="card">
+        <p class="card-eyebrow">Chapter 03</p>
+        <div class="card-divider"></div>
+        <h2 class="card-title">Placeholder — write the heading here</h2>
+        <p class="card-body">
+          Replace this text. This card appears at about 6.2s into the
+          video, over the timber motte & bailey on William's Hill.
+        </p>
+        <!-- Optional image:
+        <div class="card-media card-media--below">
+          <img src="your-image.png" alt="description">
+        </div> -->
+      </div>
+    </div>
+
+    <!-- card 04 · era 1 (timber motte & bailey on William's Hill) · t≈8.4s · right -->
+    <div class="card-anchor" data-position="0.205">
+      <div class="card">
+        <p class="card-eyebrow">Chapter 04</p>
+        <div class="card-divider"></div>
+        <h2 class="card-title">Placeholder — write the heading here</h2>
+        <p class="card-body">
+          Replace this text. This card appears at about 8.4s into the
+          video, over the timber motte & bailey on William's Hill.
+        </p>
+        <!-- Optional image:
+        <div class="card-media card-media--below">
+          <img src="your-image.png" alt="description">
+        </div> -->
+      </div>
+    </div>
+
+    <!-- card 05 · era 2 (stone keep behind a timber palisade) · t≈12.1s · left -->
+    <div class="card-anchor" data-position="0.258">
+
+      <div class="card">
+        <p class="card-eyebrow">Chapter 05</p>
+        <div class="card-divider"></div>
+        <!-- OPTIONAL media slot — see Chapter 01 card for instructions -->
+        <h2 class="card-title">From stronghold to luxurious residence</h2>
+        <p class="card-body">
+          Originally, the keep was surrounded only by a timber-defended ditch. In the early 1300s, a relatively low and thin curtain wall with four corner towers (three square, one semi-circular) was added, aiming more for prestige and expansion of living space than heavy fortification. The Neville family heavily modified the castle, adding large, vertical windows to increase natural light and constructing luxurious residential ranges around the internal courtyard.
+        </p>
+      </div>
+    </div>
+
+    <!-- card 06 · era 2 (stone keep behind a timber palisade) · t≈14.8s · right -->
+    <div class="card-anchor" data-position="0.3230">
+      <div class="card">
+        <p class="card-eyebrow">Chapter 06</p>
+        <div class="card-divider"></div>
+        <h2 class="card-title">Placeholder — write the heading here</h2>
+        <p class="card-body">
+          Replace this text. This card appears at about 14.8s into the
+          video, over the stone keep behind a timber palisade.
+        </p>
+        <!-- Optional image:
+        <div class="card-media card-media--below">
+          <img src="your-image.png" alt="description">
+        </div> -->
+      </div>
+    </div>
+
+    <!-- card 07 · era 2 (stone keep behind a timber palisade) · t≈17.4s · left -->
+    <div class="card-anchor" data-position="0.48">
+      <div class="card">
+        <p class="card-eyebrow">Chapter 07</p>
+        <div class="card-divider"></div>
+        <h2 class="card-title">Placeholder — write the heading here</h2>
+        <p class="card-body">
+          Replace this text. This card appears at about 17.4s into the
+          video, over the stone keep behind a timber palisade.
+        </p>
+        <!-- Optional image:
+        <div class="card-media card-media--below">
+          <img src="your-image.png" alt="description">
+        </div> -->
+      </div>
+    </div>
+
+    <!-- card 08 · era 2 (stone keep behind a timber palisade) · t≈20.1s · right -->
+    <div class="card-anchor" data-position="0.55">
+      <div class="card">
+        <p class="card-eyebrow">Chapter 08</p>
+        <div class="card-divider"></div>
+        <h2 class="card-title">Placeholder — write the heading here</h2>
+        <p class="card-body">
+          Replace this text. This card appears at about 20.1s into the
+          video, over the stone keep behind a timber palisade.
+        </p>
+        <!-- Optional image:
+        <div class="card-media card-media--below">
+          <img src="your-image.png" alt="description">
+        </div> -->
+      </div>
+    </div>
+
+    <!-- card 09 · era 3 (curtain wall, corner towers and ranges) · t≈24.0s · left -->
+    <!-- hide card
+    <div class="card-anchor" data-position="0.5245">
+
+      <div class="card">
+        <p class="card-eyebrow">Chapter 09</p>
+        <div class="card-divider"></div>
+        <!-- OPTIONAL media slot — see Chapter 01 card for instructions -->
+        <!--
+        <h2 class="card-title">Fit for a King</h2>
+        <p class="card-body">
+          Work on the castle, which probably began in 1397, was focused on better accommodation, as is clear from the number of extra latrines. The curtain wall was raised to create first-floor ranges on at least three sides, its towers were heightened and the tower at the north-east corner was converted to become the castle’s main gatehouse. In 1410 Henry IV stayed at Middleham while on progress in the north, suggesting that the building work had been largely completed.
+        </p>
+<div class="card-media card-media--below">
+  <img src="Middleham_plans.png" alt="description">
+</div>
+      </div>
+    </div> 
+    -->
+
+    <!-- card 10 · era 3 (curtain wall, corner towers and ranges) · t≈26.6s · right -->
+    <div class="card-anchor" data-position="0.62">
+      <div class="card">
+        <p class="card-eyebrow">Chapter 10</p>
+        <div class="card-divider"></div>
+        <h2 class="card-title">Placeholder — write the heading here</h2>
+        <p class="card-body">
+          Replace this text. This card appears at about 26.6s into the
+          video, over the curtain wall, corner towers and ranges.
+        </p>
+        <!-- Optional image:
+        <div class="card-media card-media--below">
+          <img src="your-image.png" alt="description">
+        </div> -->
+      </div>
+    </div>
+
+    <!-- card 11 · era 3 (curtain wall, corner towers and ranges) · t≈29.1s · left -->
+    <div class="card-anchor" data-position="0.675">
+      <div class="card">
+        <p class="card-eyebrow">Chapter 11</p>
+        <div class="card-divider"></div>
+        <h2 class="card-title">Placeholder — write the heading here</h2>
+        <p class="card-body">
+          Replace this text. This card appears at about 29.1s into the
+          video, over the curtain wall, corner towers and ranges.
+        </p>
+        <!-- Optional image:
+        <div class="card-media card-media--below">
+          <img src="your-image.png" alt="description">
+        </div> -->
+      </div>
+    </div>
+
+    <!-- card 12 · era 4 (heightened walls and the gatehouse) · t≈32.8s · right -->
+    <div class="card-anchor" data-position="0.72">
+
+      <div class="card">
+        <p class="card-eyebrow">Chapter 12</p>
+        <div class="card-divider"></div>
+        <!-- OPTIONAL media slot — see Chapter 01 card for instructions -->
+        <h2 class="card-title">War at Middleham</h2>
+        <p class="card-body">
+          The Neville family was at its most prominent in the mid-15th century under Richard, Earl of Warwick. During the conflict known as the Wars of the Roses (1455–85), Warwick was instrumental in Yorkist Edward, Earl of March, taking the throne from Lancastrian Henry VI in 1461, earning him the title ‘the Kingmaker’.[8]
+
+Edward IV stayed with Warwick at Middleham for a few days in 1461, and in 1464 several defeated Lancastrians were executed at the castle. But by 1469 Warwick had risen in rebellion against Edward, dissatisfied with royal policy. Edward was captured and briefly held at Middleham Castle in August 1469. He later fled to France, returning in 1471 to put down Warwick’s rebellion. The campaign culminated later that year in the Battle of Barnet, at which Edward defeated the Lancastrians and Warwick was killed.
+        </p>
+      </div>
+    </div>
+
+    <!-- card 13 · era 4 (heightened walls and the gatehouse) · t≈34.8s · left -->
+    <!--
+    <div class="card-anchor" data-position="0.7605">
+      <div class="card">
+        <p class="card-eyebrow">Chapter 13</p>
+        <div class="card-divider"></div>
+        <h2 class="card-title">Placeholder — write the heading here</h2>
+        <p class="card-body">
+          Replace this text. This card appears at about 34.8s into the
+          video, over the heightened walls and the gatehouse.
+        </p> -->
+        <!-- Optional image:
+        <div class="card-media card-media--below">
+          <img src="your-image.png" alt="description">
+        </div> -->
+      <!--
+      </div>
+    </div>
+    -->
+
+    <!-- card 14 · era 4 (heightened walls and the gatehouse) · t≈36.9s · right -->
+    <div class="card-anchor" data-position="0.78" data-side="left">
+      <div class="card">
+        <p class="card-eyebrow">Chapter 14</p>
+        <div class="card-divider"></div>
+        <h2 class="card-title">Placeholder — write the heading here</h2>
+        <p class="card-body">
+          Replace this text. This card appears at about 36.9s into the
+          video, over the heightened walls and the gatehouse.
+        </p>
+        <!-- Optional image:
+        <div class="card-media card-media--below">
+          <img src="your-image.png" alt="description">
+        </div> -->
+      </div>
+    </div>
+
+    <!-- card 15 · era 5 (final wide view over castle and gardens) · t≈40.0s · left -->
+   <!--
+    <div class="card-anchor" data-position="0.8745">
+
+      <div class="card">
+        <p class="card-eyebrow">Chapter 15</p>
+        <div class="card-divider"></div> -->
+        <!-- OPTIONAL media slot — see Chapter 01 card for instructions -->
+        <!--
+        <h2 class="card-title">From opulence to ruin</h2>
+        <p class="card-body">
+          Once known as the "Windsor of the North", the castle fell into decline after Richard III's death in 1485. After changing ownership several times, it was abandoned in the 17th century, partially dismantled (slighted) during the Civil War, and eventually became a ruined source of stone for local buildings. By the 1600s, it was considered in poor condition, and a 1644 Parliamentary committee deemed it "untenable" and unsuitable for a garrison. The castle was sold in 1604, eventually fell into private hands, and was gifted to the state in 1930.
+        </p>
+<div class="card-media card-media--below">
+  <img src="middleham-castle-aerial-view.jpg" alt="description">
+</div>
+      </div>
+    </div> 
+        -->
+
+    <!-- card 16 · era 5 (final wide view over castle and gardens) · t≈41.7s · right -->
+    <div class="card-anchor" data-position="0.92" data-side="right">
+      <div class="card">
+        <p class="card-eyebrow">Chapter 16</p>
+        <div class="card-divider"></div>
+        <h2 class="card-title">Placeholder — write the heading here</h2>
+        <p class="card-body">
+          Replace this text. This card appears at about 41.7s into the
+          video, over the final wide view over castle and gardens.
+        </p>
+        <!-- Optional image:
+        <div class="card-media card-media--below">
+          <img src="your-image.png" alt="description">
+        </div> -->
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="end-pad">
+  <p class="end-title"></p>
+  <p class="end-label">Explore Middleham Castle in 3D</p>
+  <a class="explore-card" href="https://www.towerandkeep.org/castles/middleham-castle-3d" target="_blank">
+    <video autoplay muted loop playsinline>
+      <source src="middleham-3d-flyaround.mp4" type="video/mp4">
+    </video>
+    <div class="explore-overlay">
+      <span class="explore-word">Explore</span>
+    </div>
+  </a>
+</div>
+
+<div id="intro">
+  <span>Scroll to explore</span>
+  <div class="scroll-arrow"></div>
+</div>
+
+<!-- ── LIGHTBOX ── -->
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="Expanded image">
+  <button id="lightbox-close" aria-label="Close">×</button>
+  <img id="lightbox-img" src="" alt="">
+</div>
+
+<script>
+  const video      = document.getElementById('bg-video');
+  const driver     = document.getElementById('scroll-driver');
+  const progress   = document.getElementById('progress');
+  const intro      = document.getElementById('intro');
+  const endPad     = document.getElementById('end-pad');
+  const anchors    = Array.from(document.querySelectorAll('.card-anchor'));
+
+  /* ══════════════════════════════════════════════════════════
+     TUNING
+  ══════════════════════════════════════════════════════════ */
+
+  /* How hard the video "catches up" to your scroll position each frame.
+     This existed to stop a slow decoder being flooded with seeks. Seek
+     latency on this hardware measured 1ms, so that protection is no
+     longer needed and heavy smoothing only adds lag between your
+     scrolling and the picture.
+     But a mouse wheel delivers scroll in ~100px bursts, and tracking
+     each burst exactly reproduces its steppiness. Slower catch-up blends
+     the bursts into continuous motion, which is why this went back down
+     from 0.45. 0.10 was chosen by ear against this footage on a 2560px
+     display with a mouse wheel; it gives roughly a 470ms catch-up, which
+     blends the wheel's ~100px bursts into continuous motion.
+     Lower = floatier and laggier. 1.0 = the video tracks scroll exactly. */
+  const SCRUB_SMOOTHING = 0.10;   /* let, so the tuning panel can change it live */
+
+  /* Don't ask the decoder for a new frame unless we've drifted at least
+     this far (seconds). Was 1/30 to spare the decoder; at 1ms per seek
+     a redundant request costs nothing, so this is now finer than the
+     source frame interval and never withholds a frame that exists. */
+  const SEEK_THRESHOLD = 1 / 60;
+
+  /* Once the scrub is within this many seconds of its target, treat it as
+     "at rest" and request one final, exact frame. */
+  const SETTLE_EPSILON = 0.004;
+
+  /* Scroll fraction at which the video reaches its last frame.
+     Everything between this and 1.0 is a MOTIONLESS final frame before
+     the black Explore panel scrolls in. At 0.85 that dead tail was
+     0.15 x 2400vh = 3.6 screens, which read as the ending dragging.
+     0.94 leaves ~1.4 screens: enough to take in the last shot, not
+     enough to feel stuck.
+     NOTE: card data-position values are fractions of the WHOLE driver,
+     so they must be recomputed whenever this changes:
+         position = seconds / 43.033 * VIDEO_ENDS_AT                */
+  const VIDEO_ENDS_AT = 0.94;
+
+  /* ══════════════════════════════════════════════════════════
+     STATE
+  ══════════════════════════════════════════════════════════ */
+
+  let videoDuration   = 0;
+  let targetTime      = 0;   /* where the scrollbar says the video should be */
+  let easedTime       = 0;   /* smoothed value we actually seek to          */
+  let latestScrollY   = window.scrollY;
+  let introDismissed  = false;
+  let settled         = false;  /* true once the final exact seek is done */
+
+  /* Cached layout metrics — read once, not every frame. Reading
+     offsetTop/offsetHeight mid-loop forces a synchronous layout, which is
+     one of the classic causes of scroll stutter. */
+  let driverTop    = 0;
+  let driverHeight = 0;
+  let viewportH    = window.innerHeight;
+  let narrow       = window.innerWidth <= 640;
+  let endPadTop    = 0;
+
+  /* Per-card cache so we never write a style that's already set. */
+  const cards = anchors.map(anchor => ({
+    anchor,
+    el: anchor.querySelector('.card'),
+    pos: parseFloat(anchor.dataset.position),
+    lastTransform: '',
+    visible: null
+  }));
+
+  /* --------------------------------------------------
+     VIDEO SETUP
+     Paused always; the render loop drives currentTime.
+  -------------------------------------------------- */
+  /* Pick the sharpest source this display actually needs.
+     innerWidth is in CSS pixels; multiplying by devicePixelRatio gives the
+     real pixel width the video will be stretched across. A 2560-wide
+     screen showing a 1920-wide video is a 33% upscale, which reads as
+     softness no matter how well the file is encoded. */
+  (function chooseSource() {
+    const realWidth = window.innerWidth * (window.devicePixelRatio || 1);
+    const sd = video.dataset.srcSd;
+    const hd = video.dataset.srcHd;
+    video.src = (hd && realWidth > 1920) ? hd : sd;
+  })();
+
+  video.addEventListener('loadedmetadata', () => {
+    videoDuration = video.duration;
+    video.pause();
+  });
+  video.load();
+
+  /* --------------------------------------------------
+     MEASURE — run on load and resize only
+  -------------------------------------------------- */
+  function measure() {
+    viewportH    = window.innerHeight;
+    narrow       = window.innerWidth <= 640;
+    driverHeight = driver.offsetHeight;
+    driverTop    = driver.offsetTop;
+
+    /* Place each card anchor at its fraction of the driver height */
+    cards.forEach(c => {
+      c.anchor.style.top = (c.pos * driverHeight) + 'px';
+    });
+
+    /* Re-read after the anchors moved */
+    endPadTop = endPad.offsetTop;
+  }
+
+  /* --------------------------------------------------
+     SCROLL — record only. No work happens here; the
+     render loop below owns all reads and writes.
+  -------------------------------------------------- */
+  window.addEventListener('scroll', () => {
+    latestScrollY = window.scrollY;
+  }, { passive: true });
+
+  window.addEventListener('resize', () => {
+    measure();
+  });
+
+  /* --------------------------------------------------
+     RENDER LOOP
+     One rAF loop for everything, running continuously.
+     Phase 1 computes (pure math, zero DOM reads).
+     Phase 2 writes. Never interleaved — that's what
+     causes layout thrash.
+  -------------------------------------------------- */
+  function frame() {
+    const scrollTop = latestScrollY;
+
+    /* ---- Phase 1: compute ---- */
+
+    const raw        = (scrollTop - driverTop) / driverHeight;
+    const progress01 = raw < 0 ? 0 : (raw > 1 ? 1 : raw);
+
+    if (videoDuration > 0) {
+      const videoProgress = Math.min(progress01 / VIDEO_ENDS_AT, 1);
+      targetTime = videoProgress * videoDuration;
+    }
+
+    /* Ease toward the target rather than snapping to it. Snapping means a
+       brand-new seek request on every single frame; the decoder cancels
+       the in-flight one and restarts, which is what reads as "glitchy". */
+    easedTime += (targetTime - easedTime) * SCRUB_SMOOTHING;
+    const drift = Math.abs(targetTime - easedTime);
+    if (drift < 0.001) easedTime = targetTime;
+
+    /* Has the scrub come to rest? While scrubbing we tolerate a frame of
+       slop (SEEK_THRESHOLD) to keep the decoder from thrashing — but that
+       leaves the video parked on a frame that was decoded under seek
+       pressure, which is what shows up as a soft image the moment you
+       stop. Once motion settles we issue one exact seek to force a clean,
+       full-quality decode of the frame you're actually looking at. */
+    if (drift < SETTLE_EPSILON) {
+      if (!settled && !video.seeking && videoDuration > 0) {
+        video.currentTime = targetTime;
+        settled = true;
+      }
+    } else {
+      settled = false;
+    }
+
+    /* Card geometry — derived arithmetically from cached metrics, so this
+       costs nothing and can't trigger a layout. */
+    cards.forEach(c => {
+      const anchorTopVP = driverTop + (c.pos * driverHeight) - scrollTop;
+      c.vp = anchorTopVP;
+      const distFromBottom = viewportH - anchorTopVP;
+      const fadeStart = viewportH * 0.7;
+
+      if (distFromBottom < 0) {
+        c.nextVisible = false;
+        c.nextTransform = 'translate3d(0, 40px, 0)';
+      } else if (distFromBottom > viewportH + 200) {
+        c.nextVisible = false;
+        c.nextTransform = 'translate3d(0, -60px, 0)';
+      } else {
+        c.nextVisible = true;
+        const parallax = -(distFromBottom - fadeStart) * 0.22;
+        /* Round to whole pixels — sub-pixel transforms force the
+           compositor to re-rasterize text on every frame. */
+        c.nextTransform = 'translate3d(0, ' + Math.round(parallax) + 'px, 0)';
+      }
+    });
+
+    /* With 16 cards some neighbours overlap. On a wide screen that is
+       fine - they sit on opposite sides and read as a hand-off. On a
+       phone every card is centred and bottom-anchored, so two at once
+       would collide. There, keep only the nearest one. */
+    if (narrow) {
+      let best = -1, bestDist = Infinity;
+      for (let i = 0; i < cards.length; i++) {
+        if (!cards[i].nextVisible) continue;
+        const d = Math.abs(cards[i].vp - viewportH * 0.5);
+        if (d < bestDist) { bestDist = d; best = i; }
+      }
+      for (let i = 0; i < cards.length; i++) {
+        if (i !== best) cards[i].nextVisible = false;
+      }
+    }
+
+    const introShouldHide =
+      !introDismissed && (endPadTop - scrollTop) < viewportH * 0.85;
+
+    /* ---- Phase 2: write ---- */
+
+    /* Only issue a seek when the decoder is idle. Stacking seek requests
+       on a busy decoder is the single biggest cause of scrub judder. */
+    if (videoDuration > 0 &&
+        !video.seeking &&
+        Math.abs(video.currentTime - easedTime) > SEEK_THRESHOLD) {
+      video.currentTime = easedTime;
+    }
+
+    progress.style.transform = 'scaleX(' + progress01 + ')';
+
+    cards.forEach(c => {
+      if (c.nextTransform !== c.lastTransform) {
+        c.el.style.transform = c.nextTransform;
+        c.lastTransform = c.nextTransform;
+      }
+      if (c.nextVisible !== c.visible) {
+        c.el.classList.toggle('visible', c.nextVisible);
+        c.visible = c.nextVisible;
+      }
+    });
+
+    if (introShouldHide) {
+      introDismissed = true;
+      intro.classList.add('hidden');
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  /* --------------------------------------------------
+     INIT
+  -------------------------------------------------- */
+  measure();
+  /* Re-measure once fonts and images have settled, since they change
+     the height of end-pad and the footer. */
+  window.addEventListener('load', measure);
+  requestAnimationFrame(frame);
+
+  /* --------------------------------------------------
+     LIGHTBOX — click any card image to expand
+  -------------------------------------------------- */
+  const lightbox      = document.getElementById('lightbox');
+  const lightboxImg   = document.getElementById('lightbox-img');
+  const lightboxClose = document.getElementById('lightbox-close');
+
+  document.querySelectorAll('.card-media img').forEach(img => {
+    img.addEventListener('click', (e) => {
+      e.stopPropagation();
+      lightboxImg.src = img.src;
+      lightboxImg.alt = img.alt || '';
+      lightbox.classList.add('open');
+      document.body.style.overflow = 'hidden';
+    });
+  });
+
+  function closeLightbox() {
+    lightbox.classList.remove('open');
+    document.body.style.overflow = '';
+    /* Clear src after the fade-out so it doesn't flash on next open */
+    setTimeout(() => { lightboxImg.src = ''; }, 300);
+  }
+
+  lightbox.addEventListener('click', (e) => {
+    /* Close when clicking the backdrop (anything that isn't the image itself) */
+    if (e.target === lightbox || e.target === lightboxClose) {
+      closeLightbox();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && lightbox.classList.contains('open')) {
+      closeLightbox();
+    }
+  });
+
+  /* --------------------------------------------------
+     MOBILE HAMBURGER MENU
+  -------------------------------------------------- */
+  const hamburger = document.getElementById('tk-hamburger');
+  const mobileNav = document.getElementById('tk-mobile-nav');
+
+  function closeMobileNav() {
+    hamburger.classList.remove('open');
+    mobileNav.classList.remove('open');
+    hamburger.setAttribute('aria-expanded', 'false');
+    mobileNav.setAttribute('aria-hidden', 'true');
+  }
+
+  function openMobileNav() {
+    hamburger.classList.add('open');
+    mobileNav.classList.add('open');
+    hamburger.setAttribute('aria-expanded', 'true');
+    mobileNav.setAttribute('aria-hidden', 'false');
+  }
+
+  hamburger.addEventListener('click', () => {
+    if (hamburger.classList.contains('open')) {
+      closeMobileNav();
+    } else {
+      openMobileNav();
+    }
+  });
+
+  /* Close the menu when any link inside it is tapped */
+  mobileNav.querySelectorAll('a').forEach(link => {
+    link.addEventListener('click', closeMobileNav);
+  });
+
+  /* Close the menu if the viewport grows past the hamburger breakpoint */
+  window.addEventListener('resize', () => {
+    if (window.innerWidth > 1024 && hamburger.classList.contains('open')) {
+      closeMobileNav();
+    }
+  });
+</script>
+<!-- ── FOOTER ── -->
+<footer id="tk-footer">
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <img src="https://cdn.prod.website-files.com/609b34e3d5bb71d70092abd9/69dd5618789ba899bee93b72_TK_logo_PNG.png" alt="Tower & Keep">
+      <p>501(c)(3) non-profit bringing historical sites and stories to life using immersive media.</p>
+    </div>
+    <div class="footer-nav">
+      <h4>Explore</h4>
+      <a href="https://www.towerandkeep.org/castles/castles">Castles</a>
+      <a href="https://www.towerandkeep.org/stories/stories">Stories</a>
+      <a href="https://www.towerandkeep.org/blog-posts/blog-posts">Blog</a>
+      <a href="https://www.towerandkeep.org/about-us">About us</a>
+      <a href="https://www.towerandkeep.org/contact-us">Contact us</a>
+      <a href="https://www.towerandkeep.org/donate">Support us</a>
+    </div>
+    <div class="footer-social">
+      <h4>Follow us</h4>
+      <div class="social-icons">
+        <a href="https://www.instagram.com/tower.and.keep/" target="_blank" aria-label="Instagram">
+          <img src="https://cdn.prod.website-files.com/609b34e3d5bb71d70092abd9/64c1af1863f847c5365aaec1_instagramlogo_white.png" alt="Instagram">
+        </a>
+        <a href="https://www.linkedin.com/company/tower-and-keep/" target="_blank" aria-label="LinkedIn">
+          <img src="https://cdn.prod.website-files.com/609b34e3d5bb71d70092abd9/64c1af49d63983f9d063b4c7_linkedinlogo_white.png" alt="LinkedIn">
+        </a>
+      </div>
+    </div>
+  </div>
+  <div class="footer-bottom">Copyright &copy; 2026 Tower &amp; Keep</div>
+</footer>
+
+
+
+</body>
+</html>
