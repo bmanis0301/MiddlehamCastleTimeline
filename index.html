@@ -1430,14 +1430,29 @@ Edward IV stayed with Warwick at Middleham for a few days in 1461, and in 1464 s
     driverHeight = driver.offsetHeight;
     driverTop    = driver.offsetTop;
 
-    /* Place each card anchor at its fraction of the driver height */
-    cards.forEach(c => {
-      c.anchor.style.top = (c.pos * driverHeight) + 'px';
-    });
-
-    /* Card heights, measured once here rather than per frame, so the
-       mobile visibility test can use the card's real box. */
+    /* Card heights first — the mobile offset below depends on them.
+       Measured once here rather than per frame. */
     cards.forEach(c => { c.h = c.el.offsetHeight; });
+
+    /* Place each card at its fraction of the driver height.
+
+       On a phone the anchor is 100vh tall with the card pinned to its
+       BOTTOM (see the mobile block in the CSS, which keeps the upper
+       part of the screen clear for the video). Left alone that puts
+       the card almost a full screen further down the page than the
+       same data-position puts it on desktop — about 1.2s later in the
+       footage, which is enough to carry a card across a cut and leave
+       it sitting over the wrong castle.
+
+       So on mobile the anchor is shifted up by exactly that gap, which
+       makes the CARD land on data-position rather than the anchor.
+       Desktop is unaffected: there the card is already at the top. */
+    cards.forEach(c => {
+      let top = c.pos * driverHeight;
+      if (narrow) top -= (viewportH - c.h - viewportH * 0.04);
+      c.topPx = top;
+      c.anchor.style.top = top + 'px';
+    });
 
     /* Re-read after the anchors moved */
     endPadTop = endPad.offsetTop;
@@ -1500,7 +1515,7 @@ Edward IV stayed with Warwick at Middleham for a few days in 1461, and in 1464 s
     /* Card geometry — derived arithmetically from cached metrics, so this
        costs nothing and can't trigger a layout. */
     cards.forEach(c => {
-      const anchorTopVP = driverTop + (c.pos * driverHeight) - scrollTop;
+      const anchorTopVP = driverTop + c.topPx - scrollTop;
       c.vp = anchorTopVP;
       const distFromBottom = viewportH - anchorTopVP;
       const fadeStart = viewportH * 0.7;
