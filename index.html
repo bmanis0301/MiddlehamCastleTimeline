@@ -9,12 +9,12 @@
                        laptops and integrated graphics.
   Swap the one word below to switch.
 -->
-<html lang="en" class="perf-lite">
+<html lang="en" class="perf-lite cards-persist">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Middleham Castle: A Scroll Through Time | Tower &amp; Keep</title>
-<meta name="description" content="Scroll through four centuries of Middleham Castle, from the timber motte-and-bailey on William's Hill to the glory of the 'Windsor of the North'. A 3D reconstruction by Tower &amp; Keep.">
+<meta name="description" content="Scroll through four centuries of Middleham Castle, from the timber motte-and-bailey on William's Hill to the ruined Windsor of the North. A 3D reconstruction by Tower &amp; Keep.">
 <meta name="author" content="Tower &amp; Keep">
 
 <!-- ── LINK PREVIEWS ───────────────────────────────────────────────
@@ -31,14 +31,14 @@
 <meta property="og:site_name" content="Tower &amp; Keep">
 <meta property="og:title" content="Middleham Castle: A Scroll Through Time">
 <meta property="og:description" content="Four centuries of Middleham Castle, scrolled. A 3D reconstruction by Tower &amp; Keep.">
-<meta property="og:url" content="https://bmanis0301.github.io/MiddlehamCastleTimeline/">
-<meta property="og:image" content="https://bmanis0301.github.io/MiddlehamCastleTimeline/og-image.jpg">
+<meta property="og:url" content="REPLACE-WITH-YOUR-URL/">
+<meta property="og:image" content="REPLACE-WITH-YOUR-URL/og-image.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Middleham Castle: A Scroll Through Time">
 <meta name="twitter:description" content="Four centuries of Middleham Castle, scrolled. A 3D reconstruction by Tower &amp; Keep.">
-<meta name="twitter:image" content="https://bmanis0301.github.io/MiddlehamCastleTimeline/og-image.jpg">
+<meta name="twitter:image" content="REPLACE-WITH-YOUR-URL/og-image.jpg">
 <link rel="icon" href="tk-logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
@@ -200,6 +200,21 @@
   /* No blur — cards go more opaque so text still reads over the video */
   .perf-lite .card {
     background: rgba(255, 255, 255, 0.94);
+  }
+
+  /* ── MOBILE: KEEP CARDS UP ──────────────────────────────────────
+     With "cards-persist" on <html>, a card on a phone stays fully
+     opaque for as long as any part of it is on screen, instead of
+     being switched off when its anchor's top clears the viewport.
+
+     Why that mattered: on mobile each .card-anchor is 100vh tall and
+     the card sits at its BOTTOM, but the old visibility test measured
+     the anchor's TOP. The card therefore vanished while still about a
+     third of the way up the screen — readable, then suddenly gone.
+
+     Remove the word cards-persist from the <html> tag to go back. */
+  .cards-persist .card {
+    transition: none;
   }
 
   .card.visible {
@@ -1321,6 +1336,12 @@ Edward IV stayed with Warwick at Middleham for a few days in 1461, and in 1464 s
   let driverHeight = 0;
   let viewportH    = window.innerHeight;
   let narrow       = window.innerWidth <= 640;
+
+  /* Phones: hold each card visible for its whole travel across the
+     screen rather than hiding it early. Driven by the cards-persist
+     class on <html> so it can be toggled without touching the script. */
+  const MOBILE_CARDS_PERSIST =
+    document.documentElement.classList.contains('cards-persist');
   let endPadTop    = 0;
 
   /* Per-card cache so we never write a style that's already set. */
@@ -1414,6 +1435,10 @@ Edward IV stayed with Warwick at Middleham for a few days in 1461, and in 1464 s
       c.anchor.style.top = (c.pos * driverHeight) + 'px';
     });
 
+    /* Card heights, measured once here rather than per frame, so the
+       mobile visibility test can use the card's real box. */
+    cards.forEach(c => { c.h = c.el.offsetHeight; });
+
     /* Re-read after the anchors moved */
     endPadTop = endPad.offsetTop;
   }
@@ -1480,6 +1505,17 @@ Edward IV stayed with Warwick at Middleham for a few days in 1461, and in 1464 s
       const distFromBottom = viewportH - anchorTopVP;
       const fadeStart = viewportH * 0.7;
 
+      if (narrow && MOBILE_CARDS_PERSIST) {
+        /* On a phone the anchor is 100vh and the card sits at its
+           bottom, inset by the 4vh padding. Work out where the card
+           actually is and keep it lit while any of it is on screen. */
+        const cardBottom = anchorTopVP + viewportH - viewportH * 0.04;
+        const cardTop    = cardBottom - (c.h || 0);
+        c.nextVisible    = (cardBottom > 0 && cardTop < viewportH);
+        c.nextTransform  = 'translate3d(0, 0, 0)';
+        return;
+      }
+
       if (distFromBottom < 0) {
         c.nextVisible = false;
         c.nextTransform = 'translate3d(0, 40px, 0)';
@@ -1499,7 +1535,7 @@ Edward IV stayed with Warwick at Middleham for a few days in 1461, and in 1464 s
        fine - they sit on opposite sides and read as a hand-off. On a
        phone every card is centred and bottom-anchored, so two at once
        would collide. There, keep only the nearest one. */
-    if (narrow) {
+    if (narrow && !MOBILE_CARDS_PERSIST) {
       let best = -1, bestDist = Infinity;
       for (let i = 0; i < cards.length; i++) {
         if (!cards[i].nextVisible) continue;
