@@ -31,14 +31,14 @@
 <meta property="og:site_name" content="Tower &amp; Keep">
 <meta property="og:title" content="Middleham Castle: A Scroll Through Time">
 <meta property="og:description" content="Four centuries of Middleham Castle, scrolled. A 3D reconstruction by Tower &amp; Keep.">
-<meta property="og:url" content="https://bmanis0301.github.io/MiddlehamCastleTimeline/">
-<meta property="og:image" content="https://bmanis0301.github.io/MiddlehamCastleTimeline//og-image.jpg">
+<meta property="og:url" content="REPLACE-WITH-YOUR-URL/">
+<meta property="og:image" content="REPLACE-WITH-YOUR-URL/og-image.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Middleham Castle: A Scroll Through Time">
 <meta name="twitter:description" content="Four centuries of Middleham Castle, scrolled. A 3D reconstruction by Tower &amp; Keep.">
-<meta name="twitter:image" content="https://bmanis0301.github.io/MiddlehamCastleTimeline//og-image.jpg">
+<meta name="twitter:image" content="REPLACE-WITH-YOUR-URL/og-image.jpg">
 <link rel="icon" href="tk-logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
@@ -1351,8 +1351,54 @@ Edward IV stayed with Warwick at Middleham for a few days in 1461, and in 1464 s
   video.addEventListener('loadedmetadata', () => {
     videoDuration = video.duration;
     video.pause();
+    unlockVideo();          /* muted video may be allowed to start here */
   });
   video.load();
+
+  /* ──────────────────────────────────────────────────────────────────
+     iOS UNLOCK
+
+     iOS Safari will not render frames from a <video> that has never
+     been played. Assigning currentTime on a never-played element does
+     nothing visible — you keep seeing the poster while the rest of the
+     page scrolls normally. iOS also largely ignores preload="auto"
+     until the user interacts, so the media data isn't fetched either.
+
+     The cure is to play() and immediately pause() inside a real user
+     gesture. That "activates" the element; from then on seeking renders
+     as it does everywhere else.
+
+     play() must be called synchronously inside the gesture handler, so
+     this is wired to touchstart/pointerdown rather than to scroll, and
+     the promise is allowed to reject (Low Power Mode blocks autoplay
+     outright) so a later gesture can try again.
+  ────────────────────────────────────────────────────────────────── */
+  let videoUnlocked = false;
+
+  function nudgeDecode() {
+    /* force one genuine decode so the first scrubbed frame appears */
+    try {
+      video.currentTime = video.currentTime < 0.05 ? 0.05 : video.currentTime;
+    } catch (e) { /* not seekable yet; the render loop will retry */ }
+  }
+
+  function unlockVideo() {
+    if (videoUnlocked) return;
+    videoUnlocked = true;
+    let p;
+    try { p = video.play(); } catch (e) { videoUnlocked = false; return; }
+    if (p && typeof p.then === 'function') {
+      p.then(function () { video.pause(); nudgeDecode(); })
+       .catch(function () { videoUnlocked = false; });  /* let a gesture retry */
+    } else {
+      video.pause();
+      nudgeDecode();
+    }
+  }
+
+  ['pointerdown', 'touchstart', 'click'].forEach(function (ev) {
+    document.addEventListener(ev, unlockVideo, { passive: true });
+  });
 
   /* --------------------------------------------------
      MEASURE — run on load and resize only
