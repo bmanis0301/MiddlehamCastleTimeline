@@ -8,8 +8,16 @@
   class="perf-lite"  → solid-ish cards, no blur. Noticeably smoother on
                        laptops and integrated graphics.
   Swap the one word below to switch.
+
+  MOBILE CARD TOGGLES
+  ───────────────────
+  class="cards-collapsible" → on phones, each card starts closed as a
+                       red + button with the card's title. Tapping it
+                       opens the card in its usual spot; the + becomes
+                       a −. Remove the word to go back to always-open
+                       cards. Desktop is never affected.
 -->
-<html lang="en" class="perf-lite cards-persist">
+<html lang="en" class="perf-lite cards-persist cards-collapsible">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -175,6 +183,7 @@
   .card-anchor[data-side="right"] { justify-content: flex-end; }
 
   .card {
+    position: relative;   /* anchors the mobile +/− toggle to the card's top edge */
     background: var(--card-bg);
     border-radius: var(--card-radius);
     padding: var(--card-padding);
@@ -219,6 +228,122 @@
 
   .card.visible {
     opacity: 1;
+  }
+
+  /* ── MOBILE: CARD TOGGLES (+ / −) ───────────────────────────────
+     With "cards-collapsible" on <html>, each card on a phone starts
+     closed. Only a small button shows: a red + and the card's title.
+     It sits just above the card's top edge, left-aligned with it, so
+     when the card opens it appears exactly where it always was, right
+     under the button, and the + turns into a −.
+
+     The card stays in the layout while closed (just invisible), so
+     its position and height never change between open and closed.
+
+       --toggle-gap : space between the button and the card's top edge.
+                      Set it to 0px to have the button sit right on
+                      the edge.
+
+     The buttons are added by the script (one per card, using the
+     card's own title), so there's nothing to edit in the cards.
+  ──────────────────────────────────────────────────────────────── */
+  .card-toggle {
+    display: none;   /* desktop and tablet: never shown */
+  }
+
+  @media (max-width: 640px) {
+    .cards-collapsible .card {
+      --toggle-gap: 8px;
+    }
+
+    /* Closed card: invisible but still taking up its space */
+    .cards-collapsible .card:not(.open) {
+      visibility: hidden;
+    }
+
+    .cards-collapsible .card-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      position: absolute;
+      /* -1px / +1px make up for the card's 1px border, so the button
+         lines up with the card's OUTSIDE edge, not its inside edge */
+      left: -1px;
+      bottom: calc(100% + 1px + var(--toggle-gap));
+      max-width: 100%;
+      visibility: visible;   /* stays visible while the card is hidden */
+      margin: 0;
+      padding: 0.4rem 1.1rem 0.4rem 0.35rem;
+      background: rgba(255, 255, 255, 0.94);
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      border-radius: 999px;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
+      color: var(--text-dark);
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.05rem;
+      font-weight: 700;
+      line-height: 1.2;
+      text-align: left;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* Eyebrow (small red caps) stacked above the title */
+    .cards-collapsible .card-toggle-text {
+      display: flex;
+      flex-direction: column;
+      gap: 0.1rem;
+      min-width: 0;
+    }
+
+    .cards-collapsible .card-toggle-eyebrow {
+      font-family: 'DM Sans', sans-serif;
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 0.16em;
+      line-height: 1.3;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .cards-collapsible .card-toggle:focus { outline: none; }
+    .cards-collapsible .card-toggle:focus-visible {
+      box-shadow: 0 0 0 2px var(--accent), 0 4px 18px rgba(0, 0, 0, 0.25);
+    }
+  }
+
+  /* The red circle with the + / − drawn inside it */
+  .card-toggle-icon {
+    position: relative;
+    flex: none;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .card-toggle-icon::before,
+  .card-toggle-icon::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 12px;
+    height: 2px;
+    border-radius: 1px;
+    background: #fff;
+    transform: translate(-50%, -50%);
+    transition: transform 0.2s ease;
+  }
+
+  /* Vertical stroke of the + ... */
+  .card-toggle-icon::after {
+    transform: translate(-50%, -50%) rotate(90deg);
+  }
+
+  /* ... which folds flat to make the − when the card is open */
+  .card.open .card-toggle-icon::after {
+    transform: translate(-50%, -50%) rotate(0deg);
   }
 
   .card-eyebrow {
@@ -1593,6 +1718,50 @@
   }));
 
   /* --------------------------------------------------
+     MOBILE CARD TOGGLES
+     One + button per card, labelled with the card's own
+     title. CSS only shows them on phones, and only while
+     "cards-collapsible" is on <html> (see the note at the
+     top of the file). Tapping opens or closes that card.
+  -------------------------------------------------- */
+  const CARDS_COLLAPSIBLE =
+    document.documentElement.classList.contains('cards-collapsible');
+
+  if (CARDS_COLLAPSIBLE) {
+    cards.forEach(c => {
+      const titleEl   = c.el.querySelector('.card-title');
+      const title     = titleEl ? titleEl.textContent.trim() : '';
+      const eyebrowEl = c.el.querySelector('.card-eyebrow');
+      const eyebrow   = eyebrowEl ? eyebrowEl.textContent.trim() : '';
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'card-toggle';
+      btn.setAttribute('aria-expanded', 'false');
+      btn.innerHTML =
+        '<span class="card-toggle-icon" aria-hidden="true"></span>' +
+        '<span class="card-toggle-text">' +
+          '<span class="card-toggle-eyebrow"></span>' +
+          '<span class="card-toggle-title"></span>' +
+        '</span>';
+      btn.querySelector('.card-toggle-eyebrow').textContent = eyebrow;
+      btn.querySelector('.card-toggle-title').textContent   = title;
+      if (!eyebrow) btn.querySelector('.card-toggle-eyebrow').remove();
+
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const open = c.el.classList.toggle('open');
+        btn.setAttribute('aria-expanded', String(open));
+        /* drop focus after a tap so no ring lingers */
+        if (e.detail > 0) btn.blur();
+      });
+
+      c.el.insertBefore(btn, c.el.firstChild);
+      c.toggle = btn;
+    });
+  }
+
+  /* --------------------------------------------------
      VIDEO SETUP
      Paused always; the render loop drives currentTime.
   -------------------------------------------------- */
@@ -1621,6 +1790,20 @@
         const m = parseFloat(c.anchor.dataset.positionMobile);
         if (!isNaN(m)) c.pos = m;
       });
+      /* SAFETY NET: if the mobile file can't be loaded (wrong filename,
+         not uploaded yet, blocked), fall back to the standard video
+         rather than leaving a blank screen. The cards and era timings
+         switch back to their desktop values to match it. */
+      video.addEventListener('error', function useStandardVideo() {
+        if (!sd || video.getAttribute('src') === sd) return;
+        console.warn('Mobile video failed to load (' + mobile + '). Using ' + sd + ' instead.');
+        ERA_CUTS     = ERA_CUTS_DESKTOP;
+        CLIP_SECONDS = 43.033;
+        cards.forEach(c => { c.pos = parseFloat(c.anchor.dataset.position); });
+        video.src = sd;
+        video.load();
+        measure();
+      }, { once: true });
     } else {
       video.src = (hd && realWidth > 1920) ? hd : sd;
     }
@@ -1690,6 +1873,17 @@
     /* Card heights first — the mobile offset below depends on them.
        Measured once here rather than per frame. */
     cards.forEach(c => { c.h = c.el.offsetHeight; });
+
+    /* Height of each mobile toggle plus its gap above the card, so the
+       card stays switched on while its button (which sits above it) is
+       on screen. Zero on desktop, where the toggles are hidden. */
+    cards.forEach(c => {
+      c.th = 0;
+      if (c.toggle && c.toggle.offsetHeight) {
+        const gap = parseFloat(getComputedStyle(c.el).getPropertyValue('--toggle-gap')) || 0;
+        c.th = c.toggle.offsetHeight + gap;
+      }
+    });
 
     /* Place each card at its fraction of the driver height.
 
@@ -1790,7 +1984,7 @@
            bottom, inset by the 4vh padding. Work out where the card
            actually is and keep it lit while any of it is on screen. */
         const cardBottom = anchorTopVP + viewportH - viewportH * 0.04;
-        const cardTop    = cardBottom - (c.h || 0);
+        const cardTop    = cardBottom - (c.h || 0) - (c.th || 0);  /* includes the toggle above it */
         c.nextVisible    = (cardBottom > 0 && cardTop < viewportH);
         c.nextTransform  = 'translate3d(0, 0, 0)';
         return;
