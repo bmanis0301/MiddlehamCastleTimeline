@@ -1880,6 +1880,8 @@
           inFlight--;
           if (dead) return;
           loaded[i] = 1;
+          predecode(img);
+          dirty = true;              /* a closer frame may now be available */
           if (!anyLoaded) {
             anyLoaded = true;
             document.documentElement.classList.add('frames-mode');
@@ -1903,29 +1905,64 @@
       }
     }
 
-    function nearestLoaded(i) {
-      for (let d = 0; d < count; d++) {
-        if (i - d >= 0 && loaded[i - d]) return i - d;
-        if (i + d < count && loaded[i + d]) return i + d;
-      }
+    /* Nearest frame at or before i that has arrived, and at or after */
+    function loadedBelow(i) {
+      for (let k = i; k >= 0; k--) if (loaded[k]) return k;
+      return -1;
+    }
+    function loadedAbove(i) {
+      for (let k = i; k < count; k++) if (loaded[k]) return k;
       return -1;
     }
 
-    /* Called by the render loop with the (eased) footage time */
-    function draw(t) {
-      if (dead) return;
-      const target = Math.max(0, Math.min(count - 1, Math.round(t * fps)));
-      if (target !== want) { want = target; pump(); }
-      if (!anyLoaded) return;
-      const i = loaded[want] ? want : nearestLoaded(want);
-      if (i < 0 || (i === drawn && !dirty)) return;
-      const img = imgs[i];
+    function paint(img, alpha) {
       const iw = img.naturalWidth, ih = img.naturalHeight;
       const s  = Math.max(cw / iw, ch / ih);     /* same as object-fit: cover */
       const dw = iw * s, dh = ih * s;
+      ctx.globalAlpha = alpha;
       ctx.drawImage(img, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
-      drawn = i;
+    }
+
+    /* Called by the render loop with the (eased) footage time.
+
+       SMOOTHING: rather than snapping to the nearest whole frame
+       (which steps visibly at 12 fps), the two frames either side of
+       the exact moment are blended by how far between them it falls.
+       Scrolling then reads as continuous motion. While the gaps are
+       still loading, the same blend runs between the nearest frames
+       that HAVE arrived, so early on you see a soft dissolve instead
+       of a jump.                                                     */
+    let lastPos = -1;
+    function draw(t) {
+      if (dead) return;
+      const pos    = Math.max(0, Math.min(count - 1, t * fps));
+      const target = Math.round(pos);
+      if (target !== want) { want = target; pump(); }
+      if (!anyLoaded) return;
+
+      /* Skip the redraw when nothing visible would change */
+      if (!dirty && Math.abs(pos - lastPos) < 0.01) return;
+
+      let a = loadedBelow(Math.floor(pos));
+      let b = loadedAbove(Math.ceil(pos));
+      if (a < 0) a = b;
+      if (b < 0) b = a;
+      if (a < 0) return;
+
+      const mix = (b > a) ? (pos - a) / (b - a) : 0;
+      paint(imgs[a], 1);
+      if (b !== a && mix > 0.01) paint(imgs[b], mix);
+      ctx.globalAlpha = 1;
+
+      lastPos = pos;
       dirty = false;
+    }
+
+    /* A frame that has arrived but isn't decoded yet makes the first
+       draw of it stall for a few milliseconds, which shows as a
+       hitch mid-scroll. Decode each one as soon as it lands.        */
+    function predecode(img) {
+      if (img.decode) img.decode().catch(function () {});
     }
 
     window.addEventListener('resize', function () {
