@@ -1574,7 +1574,7 @@
   <p class="end-title"></p>
   <p class="end-label">Explore Middleham Castle in 3D</p>
   <a class="explore-card" href="https://www.towerandkeep.org/castles/middleham-castle-3d" target="_blank">
-    <video autoplay muted loop playsinline>
+    <video id="explore-video" autoplay muted loop playsinline preload="auto" poster="middleham-3d-flyaround-poster.jpg">
       <source src="middleham-3d-flyaround-web.mp4" type="video/mp4">
     </video>
     <div class="explore-overlay">
@@ -2192,6 +2192,56 @@
       closeLightbox();
     }
   });
+
+  /* --------------------------------------------------
+     EXPLORE VIDEO — make sure it actually plays on phones
+
+     The autoplay attribute alone isn't reliable on mobile:
+     - iPhones in Low Power Mode, and Android phones with
+       Data Saver on, block autoplay outright.
+     - A video far down the page may never be told to start.
+     So: start it whenever it scrolls into view, pause it when
+     it leaves (saves battery, and keeps the phone's video
+     decoder free for the scrubbing background), and retry on
+     every tap or scroll-touch near it. A play() made during a
+     touch is allowed even when autoplay is blocked.
+  -------------------------------------------------- */
+  const exploreVideo = document.getElementById('explore-video');
+
+  if (exploreVideo) {
+    /* Some phones check the muted PROPERTY, not the attribute */
+    exploreVideo.muted = true;
+    exploreVideo.defaultMuted = true;
+
+    let exploreOnScreen = false;
+
+    function playExplore() {
+      if (!exploreVideo.paused) return;
+      try {
+        const p = exploreVideo.play();
+        if (p && typeof p.catch === 'function') p.catch(function () {});
+      } catch (e) { /* blocked; the next touch will retry */ }
+    }
+
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          exploreOnScreen = entry.isIntersecting;
+          if (exploreOnScreen) playExplore();
+          else exploreVideo.pause();
+        });
+      }, { threshold: 0.1 }).observe(exploreVideo);
+    } else {
+      exploreOnScreen = true;   /* very old browser: just try */
+      playExplore();
+    }
+
+    ['touchend', 'click'].forEach(function (ev) {
+      document.addEventListener(ev, function () {
+        if (exploreOnScreen) playExplore();
+      }, { passive: true });
+    });
+  }
 
   /* --------------------------------------------------
      MOBILE HAMBURGER MENU
